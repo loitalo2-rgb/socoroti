@@ -6,5 +6,6 @@ dados/
 venv/
 build/
 dist/
+socorro.spec
 *.egg-info/
 .pytest_cache/
