@@ -153,7 +153,7 @@ Opções globais (antes do comando):
 | `socorro rede rota 8.8.8.8` | Traceroute interpretado: mostra até qual salto a conexão chega e onde provavelmente para. |
 | `socorro rede portas host 80,443,3389` | Testa portas TCP em paralelo: aberta, fechada (serviço parado) ou filtrada (firewall/rota). |
 | `socorro backup --destino E:\` | Copia Documentos/Desktop/Downloads/etc. para o pendrive, confere o tamanho e não apaga nada. |
-| `socorro senha` | **Recupera a senha em um comando:** lista contas, gera senha forte, redefine, ativa e desbloqueia. |
+| `socorro senha` | **Recupera a senha em um comando:** detecta a conta, gera senha forte, redefine, ativa e desbloqueia. |
 | `socorro pendrive listar` | Lista pendrives/volumes USB com letra, modelo, sistema de arquivos e espaço. |
 | `socorro pendrive preparar --destino G:\` | Copia o kit para `G:\SocorroTI` e cria o `INICIAR-AQUI.txt` (sem apagar nada). |
 | `socorro pendrive guia` | Gera o guia de boot (Ventoy, Rufus e Windows PE) em Markdown. |
@@ -213,40 +213,45 @@ Perdeu a senha e não quer reinstalar nada? Rode:
 socorro senha
 ```
 
-O comando faz tudo em uma execução:
+É **automático**: ele descobre a conta sozinho, gera uma senha forte (14 caracteres, sem `0/O` nem `1/l/I`), redefine, **ativa e desbloqueia** a conta e mostra a senha na tela. Você não precisa digitar mais nada.
 
-1. lista as contas locais e pergunta qual recuperar;
-2. gera uma senha forte (14 caracteres, sem `0/O` nem `1/l/I`) ou usa a que você digitar;
-3. redefine a senha, **ativa e desbloqueia** a conta;
+1. abre o UAC se precisar de Administrador e continua na janela elevada;
+2. escolhe a conta pelo perfil mais recente (ignora contas de sistema);
+3. redefine a senha, ativa e desbloqueia;
 4. mostra a senha uma única vez e salva um relatório **sem** a senha.
 
-Para automação (sem perguntas):
+Para não trocar a senha por engano, se a única conta ativa for a sua (você está logado nela), ele avisa e pede confirmação explícita: `socorro senha -u SEU_USUARIO`.
+
+### Ajustes opcionais
 
 ```bash
-socorro senha --usuario ana --gerar --auto
-socorro senha -u ana -s "MinhaSenha1!" --auto
-socorro --json senha -u ana --gerar --auto
+socorro senha -u ana                  # escolhe a conta
+socorro senha -s "MinhaSenha1!"       # usa uma senha sua
+socorro senha --escolher              # mostra a lista de contas
+socorro --json senha -u ana           # automação (devolve a senha no JSON)
 ```
 
 ### O que precisa
 
 | Situação | Como funciona |
 |---|---|
-| Windows com outra conta admin | `socorro senha` pede o UAC e conclui sozinho. |
-| Windows sem sessão admin | O comando oferece abrir a janela elevada (UAC) e continua nela. |
+| Windows com outra conta admin | `socorro senha` abre o UAC e conclui sozinho, sem perguntas. |
+| Windows sem sessão admin | O comando já reabre elevado (UAC) automaticamente. |
 | Linux com acesso root | `sudo socorro senha -u ana` usa `chpasswd`. |
-| Perdeu o **único** admin | Boot pelo Linux live, monte o disco do Windows e rode `sudo socorro senha --offline --usuario NOME`. |
+| Perdeu o **único** admin | Boot pelo Linux live e rode `sudo socorro senha --offline` (detecta a conta sozinho). |
 
 ### Modo offline (o clássico "perdi o único administrador")
 
 ```bash
 # no Linux live, com o disco do Windows montado (automático se estiver em /mnt ou /media):
-sudo socorro senha --offline --usuario NOME
-# ou apontando a montagem:
-sudo socorro senha --montagem /mnt/windows --usuario NOME
+sudo socorro senha --offline
+# ou apontando a montagem manualmente:
+sudo socorro senha --montagem /mnt/windows
 ```
 
-O modo offline usa o `chntpw` (ferramenta de resgate consolidada): ele **limpa** a senha, então você entra sem senha e cadastra uma nova no primeiro login. Antes de alterar, o SocorroTI copia `SAM`, `SYSTEM` e `SECURITY` para `.socoroti-backup/`. Se o `chntpw` não estiver instalado, o comando oferece `sudo apt install chntpw`.
+Sem `-u`, ele instala o `chntpw` se faltar, lista as contas do SAM e escolhe a do perfil mais recente em `C:\Users`. Use `-u NOME` para forçar outra.
+
+O modo offline usa o `chntpw` (ferramenta de resgate consolidada): ele **limpa** a senha, então você entra sem senha e cadastra uma nova no primeiro login. Antes de alterar, o SocorroTI copia `SAM`, `SYSTEM` e `SECURITY` para `.socoroti-backup/`.
 
 > **Uso responsável:** redefinir senha só é legítimo no seu equipamento ou com autorização do responsável. O SocorroTI não cria backdoors, não contorna autenticação remota e não registra senhas em relatório.
 

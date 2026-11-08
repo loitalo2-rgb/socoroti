@@ -403,3 +403,60 @@ def resolver_usuario(contas: list[Conta], pedido: Optional[str]) -> Optional[str
         if conta.nome.lower() == pedido.lower():
             return conta.nome
     return None
+
+
+def _mtime_perfil(nome: str, raiz_usuarios: Optional[Path] = None) -> float:
+    raiz = raiz_usuarios or Path("C:/Users")
+    try:
+        return (raiz / nome).stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def conta_principal(contas: list[Conta], atual: Optional[str] = None,
+                    raiz_usuarios: Optional[Path] = None) -> Optional[str]:
+    """Escolhe sozinho a conta que o tecnico quer recuperar.
+
+    Prioriza contas humanas ativas com perfil no disco, depois a conta com o
+    perfil mais recente e, por fim, qualquer conta ativa.
+    """
+    ativas = [c for c in contas if c.ativa] or contas
+    if not ativas:
+        return None
+    humanas = [c for c in ativas if c.detalhe != "conta integrada"] or ativas
+    preferidas = [c for c in humanas if _mtime_perfil(c.nome, raiz_usuarios) > 0] or humanas
+    atual_lower = (atual or "").lower()
+    sem_atual = [c for c in preferidas if c.nome.lower() != atual_lower]
+    escolhas = sem_atual or preferidas
+    return max(escolhas, key=lambda c: (_mtime_perfil(c.nome, raiz_usuarios),
+                                        c.nome.lower() != atual_lower)).nome
+
+
+def contas_offline(runner: Runner, config: Path) -> list[str]:
+    """Lista as contas do SAM com chntpw (precisa do chntpw instalado)."""
+    if not chntpw_disponivel(runner):
+        return []
+    res = runner.run(["chntpw", "-l", "SAM"], timeout=40, cwd=str(config))
+    nomes: list[str] = []
+    for linha in (res.out or "").splitlines():
+        if ":" not in linha:
+            continue
+        chave, _, valor = linha.partition(":")
+        if "username" in chave.lower() or "usuario" in chave.lower():
+            nome = valor.strip()
+            if nome:
+                nomes.append(nome)
+    return nomes
+
+
+def conta_offline_principal(config: Path, nomes: list[str]) -> Optional[str]:
+    """Escolhe a conta offline pelo perfil mais recente em C:\\Users."""
+    raiz = config.parents[2] if len(config.parents) > 2 else config.parent
+    usuarios = raiz / "Users"
+    candidatos = [n for n in nomes if n.lower() not in
+                  ("administrator", "administrador", "defaultaccount", "guest",
+                   "convidado", "wdagutilityaccount", "defaultuser0")]
+    lista = candidatos or nomes
+    if not lista:
+        return None
+    return max(lista, key=lambda n: (_mtime_perfil(n, usuarios), n)).strip() or None

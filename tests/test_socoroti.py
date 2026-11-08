@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -600,6 +601,54 @@ class TestSenha(unittest.TestCase):
         resultado = senha.redefinir_windows(Falso(), "ana", "Senha1!x")  # type: ignore[arg-type]
         self.assertFalse(resultado.ok)
         self.assertIn("nao encontrado", resultado.mensagem)
+
+    def test_conta_principal_pula_conta_atual(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            raiz = Path(tmp)
+            (raiz / "ana").mkdir()
+            (raiz / "beto").mkdir()
+            os.utime(raiz / "ana", (1000, 1000))
+            os.utime(raiz / "beto", (2000, 2000))
+            contas = [senha.Conta("ana"), senha.Conta("beto")]
+            self.assertEqual(senha.conta_principal(contas, "beto", raiz), "ana")
+            self.assertEqual(senha.conta_principal(contas, "ana", raiz), "beto")
+
+    def test_conta_principal_unica_ativa(self) -> None:
+        contas = [senha.Conta("Administrator", ativa=False, admin=True),
+                  senha.Conta("ana", ativa=True),
+                  senha.Conta("Guest", ativa=False)]
+        self.assertEqual(senha.conta_principal(contas, "ana"), "ana")
+
+    def test_conta_offline_principal_usa_perfil(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            raiz = Path(tmp)
+            config = raiz / "Windows" / "System32" / "config"
+            config.mkdir(parents=True)
+            (raiz / "Users" / "ana").mkdir(parents=True)
+            (raiz / "Users" / "beto").mkdir(parents=True)
+            os.utime(raiz / "Users" / "ana", (1000, 1000))
+            os.utime(raiz / "Users" / "beto", (2000, 2000))
+            nomes = ["Administrator", "ana", "beto"]
+            self.assertEqual(senha.conta_offline_principal(config, nomes), "beto")
+
+    def test_contas_offline_parser(self) -> None:
+        class Falso:
+            def which(self, nome: str):
+                return "/usr/bin/chntpw"
+
+            def run(self, args, timeout=30, cwd=None, **kwargs):
+                from socoroti.runner import Result
+
+                return Result(args=args, code=0, out=(
+                    "| Username : Administrator\n"
+                    "| RID      : 01f4\n"
+                    "| Username : italo\n"
+                    "| RID      : 03e8\n"
+                ))
+
+        nomes = senha.contas_offline(Falso(), Path("."))  # type: ignore[arg-type]
+        self.assertIn("italo", nomes)
+        self.assertIn("Administrator", nomes)
 
 
 if __name__ == "__main__":
