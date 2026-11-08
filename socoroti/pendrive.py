@@ -291,6 +291,11 @@ COMO RODAR
 
 Guia completo de boot: GUIA-BOOT.md
 
+Perdi a senha (um comando):
+    socorro.cmd senha
+    socorro.exe senha
+    sudo bash socorro.sh senha
+
 Windows normal (com Python 3.9+):
     socorro.cmd diagnostico
 
@@ -308,6 +313,8 @@ Linux live (Ubuntu/Fedora/etc.):
 ATALHOS QUE MAIS QUEBRAM GALHO NO RESGATE
 
     sudo bash socorro.sh rede diagnostico
+    sudo bash socorro.sh senha
+    sudo bash socorro.sh senha --offline --usuario NOME   # perdeu o unico admin
     sudo bash socorro.sh rede monitor --duracao 600
     sudo bash socorro.sh sistema diagnostico
     sudo bash socorro.sh acesso playbooks

@@ -81,6 +81,7 @@ class Runner:
         timeout: int = 30,
         env: Optional[dict[str, str]] = None,
         input_text: Optional[str] = None,
+        cwd: Optional[str] = None,
     ) -> Result:
         inicio = time.perf_counter()
         ambiente = None
@@ -94,6 +95,7 @@ class Runner:
                 timeout=timeout,
                 input=input_text.encode() if input_text is not None else None,
                 env=ambiente,
+                cwd=cwd,
                 stdin=subprocess.DEVNULL if input_text is None else None,
             )
             res = Result(

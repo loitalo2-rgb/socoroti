@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from socoroti import access, backup, monitor, net, pendrive, playbooks, ports, report, route, system
+from socoroti import access, backup, monitor, net, pendrive, playbooks, ports, report, route, senha, system
 from socoroti.model import SEVERIDADE
 from socoroti.runner import Runner
 
@@ -529,6 +529,77 @@ class TestPendrive(unittest.TestCase):
             self.assertTrue((kit / "socorro-pe.cmd").exists())
             pth = (kit / "python" / "python313._pth").read_text(encoding="utf-8")
             self.assertIn("..", pth.splitlines())
+
+
+class TestSenha(unittest.TestCase):
+    def test_gerar_senha_forte(self) -> None:
+        for _ in range(20):
+            s = senha.gerar_senha()
+            self.assertEqual(len(s), 14)
+            self.assertTrue(any(c.islower() for c in s))
+            self.assertTrue(any(c.isupper() for c in s))
+            self.assertTrue(any(c.isdigit() for c in s))
+            self.assertTrue(any(c in senha._SENHA_SIMBOLOS for c in s))
+            self.assertNotIn("O", s)
+            self.assertNotIn("0", s)
+
+    def test_gerar_respeita_tamanho_minimo(self) -> None:
+        self.assertGreaterEqual(len(senha.gerar_senha(4)), 8)
+
+    def test_ps_aspas_escapa(self) -> None:
+        self.assertEqual(senha._ps_aspas("ana"), "'ana'")
+        self.assertEqual(senha._ps_aspas("o'brien"), "'o''brien'")
+
+    def test_resolver_usuario_ignora_caixa(self) -> None:
+        contas = [senha.Conta("Ana"), senha.Conta("Beto")]
+        self.assertEqual(senha.resolver_usuario(contas, "ana"), "Ana")
+        self.assertIsNone(senha.resolver_usuario(contas, "carla"))
+
+    def test_localizar_windows_inexistente(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(senha._pasta_config_windows(Path(tmp)))
+
+    def test_localizar_windows_acha_sam(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "Windows" / "System32" / "config"
+            config.mkdir(parents=True)
+            (config / "SAM").write_text("x", encoding="utf-8")
+            self.assertEqual(senha._pasta_config_windows(Path(tmp)), config)
+
+    def test_offline_sem_sam(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            resultado = senha.redefinir_offline(Runner(), Path(tmp), "ana")
+            self.assertFalse(resultado.ok)
+            self.assertIn("SAM", resultado.mensagem)
+
+    def test_resultado_oculta_senha_no_relatorio(self) -> None:
+        r = senha.Resultado(True, "ok", usuario="ana", senha="Segredo1!")
+        self.assertEqual(r.para_dict()["senha"], "")
+        self.assertEqual(r.para_dict(ocultar_senha=False)["senha"], "Segredo1!")
+
+    def test_windows_sucesso(self) -> None:
+        class Falso:
+            def ps(self, script: str, timeout: int = 40):
+                from socoroti.runner import Result
+
+                self.script = script
+                return Result(args=[], code=0, out="SOCORRO_OK")
+
+        falso = Falso()
+        resultado = senha.redefinir_windows(falso, "ana", "Senha1!x")  # type: ignore[arg-type]
+        self.assertTrue(resultado.ok)
+        self.assertIn("ana", resultado.mensagem)
+
+    def test_windows_falha_mostra_motivo(self) -> None:
+        class Falso:
+            def ps(self, script: str, timeout: int = 40):
+                from socoroti.runner import Result
+
+                return Result(args=[], code=1, out="SOCORRO_FALHOU: usuario nao encontrado")
+
+        resultado = senha.redefinir_windows(Falso(), "ana", "Senha1!x")  # type: ignore[arg-type]
+        self.assertFalse(resultado.ok)
+        self.assertIn("nao encontrado", resultado.mensagem)
 
 
 if __name__ == "__main__":

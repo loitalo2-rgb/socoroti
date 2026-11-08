@@ -11,7 +11,8 @@ import sys
 from pathlib import Path
 from typing import Any, Optional
 
-from . import __version__, access, backup, monitor, net, platform_info, pendrive, playbooks, ports, route, system
+from . import (__version__, access, backup, monitor, net, platform_info,
+               pendrive, playbooks, ports, route, senha, system)
 from .model import Action, Diagnosis
 from .report import Report, relatorio_diagnostico, salvar_json
 from .runner import Runner
@@ -366,6 +367,173 @@ def _cmd_rede_portas(args: argparse.Namespace, runner: Runner, ui: UI) -> int:
 
 
 # --------------------------------------------------------------------------- acesso
+def _cmd_senha(args: argparse.Namespace, runner: Runner, ui: UI) -> int:
+    """Redefine a senha de uma conta local em um unico comando."""
+    if not args.json:
+        _cabecalho(ui, "SocorroTI - recuperar senha",
+                   "Um comando: escolhe a conta, gera a senha e desbloqueia o acesso.")
+
+    if platform_info.eh_windows() and not platform_info.eh_admin() and not args.offline:
+        if args.auto or (ui.interactive and ui.confirmar(
+            "Preciso de Administrador. Abrir uma janela elevada agora?", padrao=True
+        )):
+            if platform_info.reexecutar_como_admin():
+                if not args.json:
+                    ui.info("Janela de Administrador aberta. O resgate continua nela.")
+                return 0
+        if not args.json:
+            ui.erro("Sem Administrador nao da para redefinir a senha.")
+            ui.info(platform_info.dica_admin())
+        return 2
+
+    config: Optional[Path] = None
+    offline = bool(args.offline)
+    if args.montagem:
+        config = Path(args.montagem) / "Windows" / "System32" / "config"
+        if not (config / "SAM").is_file():
+            config = Path(args.montagem)
+        offline = True
+    elif not platform_info.eh_windows():
+        config = senha.montar_windows(runner)
+        offline = config is not None or offline
+
+    if offline:
+        return _cmd_senha_offline(args, runner, ui, config)
+
+    contas = senha.listar_contas(runner)
+    if not contas:
+        ui.erro("Nenhuma conta local encontrada.")
+        return 1
+
+    usuario = senha.resolver_usuario(contas, args.usuario)
+    if not usuario and not args.json and ui.interactive:
+        ui.secao("Contas locais")
+        ui.tabela(
+            ["#", "Conta", "Tipo", "Estado"],
+            [[str(i), c.nome, "admin" if c.admin else "usuario",
+              "ativa" if c.ativa else "desativada"]
+             for i, c in enumerate(contas, 1)],
+        )
+        try:
+            escolha = input("  Numero ou nome da conta: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            ui.info("Nada foi feito.")
+            return 0
+        if escolha.isdigit() and 1 <= int(escolha) <= len(contas):
+            usuario = contas[int(escolha) - 1].nome
+        else:
+            usuario = senha.resolver_usuario(contas, escolha)
+    if not usuario:
+        ui.erro("Informe a conta: socorro senha --usuario NOME")
+        return 2
+
+    nova = args.nova_senha or ""
+    gerada = False
+    if not nova:
+        if args.gerar or not ui.interactive:
+            nova = senha.gerar_senha()
+            gerada = True
+        else:
+            import getpass
+
+            try:
+                nova = getpass.getpass("  Nova senha (ENTER gera uma forte): ").strip()
+                if nova:
+                    confirmacao = getpass.getpass("  Repita a nova senha: ").strip()
+                    if nova != confirmacao:
+                        ui.erro("As senhas nao conferem. Nada foi alterado.")
+                        return 2
+            except (EOFError, KeyboardInterrupt):
+                ui.espaco()
+                ui.info("Nada foi feito.")
+                return 0
+            if not nova:
+                nova = senha.gerar_senha()
+                gerada = True
+
+    if not args.auto and not args.json and ui.interactive and not ui.confirmar(
+        f"Redefinir a senha de '{usuario}' agora?", padrao=True
+    ):
+        ui.info("Nada foi alterado.")
+        return 0
+
+    if platform_info.eh_windows():
+        resultado = senha.redefinir_windows(runner, usuario, nova)
+    else:
+        resultado = senha.redefinir_linux(runner, usuario, nova)
+
+    if args.json:
+        print(json.dumps(resultado.para_dict(ocultar_senha=False), ensure_ascii=False, indent=2))
+    elif resultado.ok:
+        ui.secao("Pronto")
+        ui.kv("Conta", resultado.usuario)
+        ui.kv("Nova senha", resultado.senha)
+        if gerada:
+            ui.info("Senha gerada automaticamente (14 caracteres, sem ambiguidade).")
+        ui.ok(resultado.mensagem)
+        ui.aviso("Anote a senha agora e troque no primeiro login (Ctrl+Alt+Del).")
+    else:
+        ui.erro(resultado.mensagem)
+        ui.info(platform_info.dica_admin())
+    _salvar_relatorio_senha(resultado, args.sem_relatorio, ui)
+    return 0 if resultado.ok else 1
+
+
+def _cmd_senha_offline(args: argparse.Namespace, runner: Runner, ui: UI,
+                       config: Optional[Path]) -> int:
+    if not config or not (config / "SAM").is_file():
+        ui.erro("Nao encontrei o Windows montado.")
+        ui.info("No Linux live, rode: sudo socorro senha --offline")
+        ui.info("Ou monte o disco e informe: --montagem /mnt/windows")
+        return 2
+    usuario = args.usuario
+    if not usuario and not args.json and ui.interactive:
+        try:
+            usuario = input("  Nome da conta do Windows (o que aparece no login): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            ui.info("Nada foi feito.")
+            return 0
+    if not usuario:
+        ui.erro("Informe a conta: sudo socorro senha --offline --usuario NOME")
+        return 2
+    if not ui.interactive or args.auto:
+        instalar = True
+    else:
+        instalar = ui.confirmar("Instalar o chntpw agora se faltar?", padrao=True)
+    resultado = senha.redefinir_offline(runner, config, usuario, instalar=instalar)
+    if args.json:
+        print(json.dumps(resultado.para_dict(), ensure_ascii=False, indent=2))
+        return 0 if resultado.ok else 1
+    if resultado.ok:
+        ui.ok(resultado.mensagem)
+        for detalhe in resultado.detalhes:
+            ui.info(detalhe)
+        ui.aviso("Entre sem senha; o Windows vai pedir para cadastrar uma nova.")
+    else:
+        ui.erro(resultado.mensagem)
+    _salvar_relatorio_senha(resultado, args.sem_relatorio, ui)
+    return 0 if resultado.ok else 1
+
+
+def _salvar_relatorio_senha(resultado: senha.Resultado, sem_relatorio: bool, ui: UI) -> None:
+    if sem_relatorio:
+        return
+    try:
+        rel = Report("Recuperacao de senha", area="senha")
+        rel.meta["Conta"] = resultado.usuario or "-"
+        rel.meta["Caminho"] = resultado.caminho or "-"
+        rel.meta["Resultado"] = "sucesso" if resultado.ok else "falha"
+        rel.h2("Resumo")
+        rel.p(resultado.mensagem)
+        if resultado.detalhes:
+            rel.lista(resultado.detalhes)
+        rel.p("A senha NAO e registrada no relatorio. Anote-a no momento do resgate.")
+        caminho = rel.salvar()
+        ui.info(f"Relatorio salvo em: {caminho}")
+    except OSError as exc:
+        ui.aviso(f"Nao foi possivel salvar o relatorio: {exc}")
+
+
 def _cmd_acesso_diagnostico(args: argparse.Namespace, runner: Runner, ui: UI) -> int:
     if not args.json:
         _cabecalho(ui, "SocorroTI - diagnostico de acesso",
@@ -571,12 +739,21 @@ def _cmd_acesso_offline(args: argparse.Namespace, ui: UI) -> int:
         except (EOFError, KeyboardInterrupt):
             return 0
 
-    sucesso, msg = access.recuperar_senha_offline(montagem, usuario)
-    if sucesso:
-        ui.ok(msg)
+    config = Path(montagem) / "Windows" / "System32" / "config"
+    if not (config / "SAM").is_file():
+        config = Path(montagem)
+    resultado = senha.redefinir_offline(Runner(), config, usuario, instalar=True)
+    if resultado.ok:
+        ui.ok(resultado.mensagem)
+        for detalhe in resultado.detalhes:
+            ui.info(detalhe)
     else:
-        ui.erro(msg)
-    return 0 if sucesso else 1
+        ui.erro(resultado.mensagem)
+    return 0 if resultado.ok else 1
+
+
+def _resumo_geral(diags: list[Diagnosis]) -> str:
+    """Frase de uma linha com o achado mais grave do diagnostico combinado."""
     graves = [(d, f) for d in diags for f in d.findings if f.severity in ("critico", "erro")]
     if graves:
         d, f = graves[0]
@@ -947,6 +1124,7 @@ def _menu(runner: Runner, ui: UI, args: argparse.Namespace) -> int:
                 "Rede: diagnosticar e corrigir (internet caiu, lenta, sem IP)",
                 "Rede: monitorar estabilidade (quedas de vez em quando)",
                 "Rede: rota (onde para) e teste de portas",
+                "Recuperar senha (um comando, sem reinstalar)",
                 "Acesso: contas, RDP/SSH, boot e recuperacao",
                 "Computador: disco, memoria, CPU e limpeza",
                 "Diagnostico completo + relatorio para o chamado",
@@ -958,17 +1136,22 @@ def _menu(runner: Runner, ui: UI, args: argparse.Namespace) -> int:
             ],
             padrao=1,
         )
-        if escolha == 11:
+        if escolha == 12:
             ui.info("Ate a proxima.")
             return 0
         try:
             if escolha == 1:
+                sub = argparse.Namespace(usuario=None, nova_senha=None, gerar=False,
+                                         offline=False, montagem=None, auto=False,
+                                         json=False, sem_relatorio=False)
+                _cmd_senha(sub, runner, ui)
+            elif escolha == 2:
                 sub = argparse.Namespace(completo=args.completo, contagem=4, json=False,
                                          sem_relatorio=False, simular=False, auto=False, tudo=False)
                 _cmd_rede_diagnostico(sub, runner, ui)
                 if ui.confirmar("Quer tentar as correcoes automaticas agora?", padrao=False):
                     _cmd_rede_solucionar(sub, runner, ui)
-            elif escolha == 2:
+            elif escolha == 3:
                 minutos = 5
                 try:
                     bruto = input("  Duracao em minutos [5]: ").strip()
@@ -979,7 +1162,7 @@ def _menu(runner: Runner, ui: UI, args: argparse.Namespace) -> int:
                 sub = argparse.Namespace(alvo="1.1.1.1", duracao=minutos * 60, intervalo=2.0,
                                          sem_gateway=False, csv=True, json=False, sem_relatorio=False)
                 _cmd_rede_monitor(sub, runner, ui)
-            elif escolha == 3:
+            elif escolha == 4:
                 try:
                     alvo = input("  Alvo para a rota/portas [1.1.1.1]: ").strip() or "1.1.1.1"
                 except (EOFError, KeyboardInterrupt):
@@ -994,20 +1177,20 @@ def _menu(runner: Runner, ui: UI, args: argparse.Namespace) -> int:
                     prt = argparse.Namespace(host=alvo, portas=lista, timeout=2.0,
                                              json=False, sem_relatorio=False)
                     _cmd_rede_portas(prt, runner, ui)
-            elif escolha == 4:
+            elif escolha == 5:
                 sub = argparse.Namespace(json=False, sem_relatorio=False, playbook=None,
                                          aplicar=False, auto=False)
                 _cmd_acesso_recuperar(sub, runner, ui)
-            elif escolha == 5:
+            elif escolha == 6:
                 sub = argparse.Namespace(json=False, sem_relatorio=False)
                 _cmd_sistema_diagnostico(sub, runner, ui)
                 if ui.confirmar("Ver o que pode ser limpo no disco?", padrao=False):
                     lim = argparse.Namespace(json=False)
                     _cmd_sistema_limpeza(lim, runner, ui)
-            elif escolha == 6:
+            elif escolha == 7:
                 sub = argparse.Namespace(json=False, completo=args.completo, sem_relatorio=False)
                 _cmd_diagnostico_completo(sub, runner, ui)
-            elif escolha == 7:
+            elif escolha == 8:
                 sub = argparse.Namespace(id=None, sem_relatorio=False)
                 _cmd_acesso_playbooks(sub, runner, ui)
                 ui.pausar()
@@ -1021,17 +1204,17 @@ def _menu(runner: Runner, ui: UI, args: argparse.Namespace) -> int:
                         _mostrar_playbook(pb, ui)
                     else:
                         ui.aviso("ID invalido.")
-            elif escolha == 8:
+            elif escolha == 9:
                 sub = argparse.Namespace(destino=None, pastas=None, limite_gb=0.0, simular=False,
                                          incluir_chaves=False, json=False, sem_relatorio=False)
                 _cmd_backup(sub, runner, ui)
-            elif escolha == 9:
+            elif escolha == 10:
                 sub = argparse.Namespace(destino=None, python_zip=None, forcar=False, auto=False, json=False)
                 _cmd_pendrive_preparar(sub, runner, ui)
                 if ui.confirmar("Ver/gerar o guia de boot agora?", padrao=True):
                     _cmd_pendrive_guia(argparse.Namespace(mostrar=False, json=False, sem_relatorio=False),
                                        runner, ui)
-            elif escolha == 10:
+            elif escolha == 11:
                 sub = argparse.Namespace(empresa=None, modelo=None, rede=None, chave=None,
                                          provedor=None, contato=None, cofre=None,
                                          destino=None, rapido=False, interativo=False)
@@ -1043,6 +1226,16 @@ def _menu(runner: Runner, ui: UI, args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------- parser
+def _argumentos_senha(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--usuario", "-u", help="conta alvo (padrao: pergunta)")
+    p.add_argument("--nova-senha", "-s", help="nova senha (padrao: gera uma forte)")
+    p.add_argument("--gerar", action="store_true", help="gera uma senha forte automaticamente")
+    p.add_argument("--offline", action="store_true",
+                   help="limpa a senha do Windows pelo Linux live (chntpw)")
+    p.add_argument("--montagem", help="pasta onde o disco do Windows esta montado")
+    p.add_argument("--auto", action="store_true", help="nao pede confirmacao")
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="socorro",
@@ -1117,6 +1310,8 @@ def _build_parser() -> argparse.ArgumentParser:
     off = ac_sub.add_parser("offline", help="recuperacao offline de conta via disco montado")
     off.add_argument("montagem", nargs="?", help="caminho do disco montado")
     off.add_argument("usuario", nargs="?", help="nome do usuario")
+    sn = ac_sub.add_parser("senha", aliases=["perdi"], help="redefine a senha em um comando")
+    _argumentos_senha(sn)
 
     # rápidos
     sub.add_parser("pronto", help="diagnostica e corrige rede automaticamente")
@@ -1138,6 +1333,9 @@ def _build_parser() -> argparse.ArgumentParser:
     combo.add_argument("--duracao", type=int, default=300, help="duracao do monitor (padrao 300s)")
 
     sub.add_parser("menu", aliases=["plantao"], help="menu interativo de primeiros socorros")
+    sp = sub.add_parser("senha", aliases=["perdi-senha", "recuperar-senha", "reset-senha"],
+                        help="redefine a senha de uma conta local (um comando)")
+    _argumentos_senha(sp)
     cart = sub.add_parser("cartao", aliases=["cartao-recuperacao"], help="gera cartao de recuperacao imprimivel")
     cart.add_argument("--alta", action="store_true", help="gera resumo para o usuario final")
     cart.add_argument("--diag-id", help="id do relatorio para basear a alta")
@@ -1208,6 +1406,10 @@ def _normalizar(args: argparse.Namespace) -> None:
         "copiar": "preparar",
         "ls": "listar",
         "ajuda-boot": "guia",
+        "perdi-senha": "senha",
+        "recuperar-senha": "senha",
+        "reset-senha": "senha",
+        "perdi": "senha",
     }
     if args.comando in aliases:
         args.comando = aliases[args.comando]
@@ -1269,6 +1471,8 @@ def main(argv: Optional[list[str]] = None) -> int:
                 return _cmd_acesso_elevar(args, runner, ui)
             if acao == "offline":
                 return _cmd_acesso_offline(args, ui)
+            if acao == "senha":
+                return _cmd_senha(args, runner, ui)
             parser.error("acao de acesso desconhecida")
         if args.comando == "sistema":
             acao = getattr(args, "acao", None) or "diagnostico"
@@ -1286,6 +1490,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         if args.comando == "menu":
             args.completo = False
             return _menu(runner, ui, args)
+        if args.comando == "senha":
+            return _cmd_senha(args, runner, ui)
         if args.comando == "cartao":
             if args.alta:
                 return _cmd_cartao_alta(args, ui)

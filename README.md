@@ -37,6 +37,7 @@ python -m socoroti diagnostico
 - [Baixar](#baixar)
 - [Instalação / uso no pendrive](#instalação--uso-no-pendrive)
 - [Comandos](#comandos)
+- [Recuperar senha em um comando](#recuperar-senha-em-um-comando)
 - [Rede: como o diagnóstico funciona](#rede-como-o-diagnóstico-funciona)
 - [Rede: correções automáticas e assistidas](#rede-correções-automáticas-e-assistidas)
 - [Rede: monitor, rota e portas](#rede-monitor-rota-e-portas)
@@ -152,6 +153,7 @@ Opções globais (antes do comando):
 | `socorro rede rota 8.8.8.8` | Traceroute interpretado: mostra até qual salto a conexão chega e onde provavelmente para. |
 | `socorro rede portas host 80,443,3389` | Testa portas TCP em paralelo: aberta, fechada (serviço parado) ou filtrada (firewall/rota). |
 | `socorro backup --destino E:\` | Copia Documentos/Desktop/Downloads/etc. para o pendrive, confere o tamanho e não apaga nada. |
+| `socorro senha` | **Recupera a senha em um comando:** lista contas, gera senha forte, redefine, ativa e desbloqueia. |
 | `socorro pendrive listar` | Lista pendrives/volumes USB com letra, modelo, sistema de arquivos e espaço. |
 | `socorro pendrive preparar --destino G:\` | Copia o kit para `G:\SocorroTI` e cria o `INICIAR-AQUI.txt` (sem apagar nada). |
 | `socorro pendrive guia` | Gera o guia de boot (Ventoy, Rufus e Windows PE) em Markdown. |
@@ -188,6 +190,9 @@ socorro backup --destino E:\ --auto
 # "Perdi o acesso ao computador" (na máquina)
 socorro acesso recuperar
 
+# "Perdi a senha" (um comando resolve)
+socorro senha
+
 # "Nem eu entro mais por RDP"
 socorro acesso remoto
 
@@ -197,6 +202,53 @@ socorro diagnostico --completo
 # "Deixar o cliente preparado para a próxima"
 socorro cartao --interativo
 ```
+
+---
+
+## Recuperar senha em um comando
+
+Perdeu a senha e não quer reinstalar nada? Rode:
+
+```bash
+socorro senha
+```
+
+O comando faz tudo em uma execução:
+
+1. lista as contas locais e pergunta qual recuperar;
+2. gera uma senha forte (14 caracteres, sem `0/O` nem `1/l/I`) ou usa a que você digitar;
+3. redefine a senha, **ativa e desbloqueia** a conta;
+4. mostra a senha uma única vez e salva um relatório **sem** a senha.
+
+Para automação (sem perguntas):
+
+```bash
+socorro senha --usuario ana --gerar --auto
+socorro senha -u ana -s "MinhaSenha1!" --auto
+socorro --json senha -u ana --gerar --auto
+```
+
+### O que precisa
+
+| Situação | Como funciona |
+|---|---|
+| Windows com outra conta admin | `socorro senha` pede o UAC e conclui sozinho. |
+| Windows sem sessão admin | O comando oferece abrir a janela elevada (UAC) e continua nela. |
+| Linux com acesso root | `sudo socorro senha -u ana` usa `chpasswd`. |
+| Perdeu o **único** admin | Boot pelo Linux live, monte o disco do Windows e rode `sudo socorro senha --offline --usuario NOME`. |
+
+### Modo offline (o clássico "perdi o único administrador")
+
+```bash
+# no Linux live, com o disco do Windows montado (automático se estiver em /mnt ou /media):
+sudo socorro senha --offline --usuario NOME
+# ou apontando a montagem:
+sudo socorro senha --montagem /mnt/windows --usuario NOME
+```
+
+O modo offline usa o `chntpw` (ferramenta de resgate consolidada): ele **limpa** a senha, então você entra sem senha e cadastra uma nova no primeiro login. Antes de alterar, o SocorroTI copia `SAM`, `SYSTEM` e `SECURITY` para `.socoroti-backup/`. Se o `chntpw` não estiver instalado, o comando oferece `sudo apt install chntpw`.
+
+> **Uso responsável:** redefinir senha só é legítimo no seu equipamento ou com autorização do responsável. O SocorroTI não cria backdoors, não contorna autenticação remota e não registra senhas em relatório.
 
 ---
 
@@ -537,13 +589,14 @@ O projeto tem testes de unidade para os parsers e para o motor de regras (sem to
 python -m unittest discover -s tests -v
 ```
 
-São 46 testes cobrindo:
+São 56 testes cobrindo:
 
 - leitura de `ping` em português/inglês, perda total e `<1ms`;
 - cenários de rede: tudo OK, sem link, APIPA/DHCP, sem internet, DNS, perda de pacotes, proxy;
 - monitor de estabilidade: queda local × externa, latência alta e série vazia;
 - parsers de `tracert`/`traceroute`, listas de portas com intervalos e backup (cópia, limite, simulação e destino inválido);
 - preparação de pendrive, Python embutido e conteúdo do guia de boot;
+- recuperação de senha: geração forte, escape de PowerShell, contas e modo offline;
 - ordenação por gravidade e execução de ações (incluindo bloqueio de risco alto);
 - relatório, cartão e playbooks;
 - utilitários (bytes, datas, acentos).
@@ -560,6 +613,7 @@ socoroti/
 ├─ route.py          traceroute interpretado
 ├─ ports.py          teste de portas TCP
 ├─ backup.py         backup de emergência com verificação
+├─ senha.py          recuperação de senha online e offline (um comando)
 ├─ pendrive.py       preparação do pendrive e guia de boot
 ├─ access.py         contas, RDP/SSH, boot, BitLocker/LUKS, ações
 ├─ system.py         disco, memória, CPU, saúde, limpeza
