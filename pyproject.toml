@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "socoroti"
+version = "1.1.0"
+description = "Kit portatil de primeiros socorros para tecnicos de TI (Windows/Linux)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "SocorroTI" }]
+keywords = ["suporte", "ti", "diagnostico", "rede", "recuperacao"]
+classifiers = [
+  "Environment :: Console",
+  "Intended Audience :: System Administrators",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Topic :: System :: Systems Administration",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/loitalo2-rgb/socoroti"
+Issues = "https://github.com/loitalo2-rgb/socoroti/issues"
+
+[project.scripts]
+socorro = "socoroti.cli:main"
+
+[tool.setuptools]
+packages = ["socoroti"]
